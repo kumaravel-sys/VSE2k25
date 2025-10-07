@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Indian Stock Market Simulator — VSE</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root{--bg:#041022;--card:#071427;--accent:#06b6d4;--muted:#94a3b8}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,#031223,#021116);color:#eaf6fb}
+    .wrap{max-width:1200px;margin:18px auto;padding:18px}
+    header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}
+    .brand{display:flex;gap:12px;align-items:center}
+    .logo{width:48px;height:48px;border-radius:10px;background:linear-gradient(90deg,#06b6d4,#0ea5a4);display:flex;align-items:center;justify-content:center;font-weight:700}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:14px;border-radius:12px;box-shadow:0 8px 30px rgba(2,6,23,0.6)}
+    .row{display:flex;gap:12px}
+    .col{flex:1}
+    input,select,button{padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.05);background:transparent;color:inherit}
+    button.primary{background:var(--accent);color:#022;border:none;font-weight:700}
+    .muted{color:var(--muted);font-size:0.9rem}
+    .small{font-size:0.85rem}
+    .watchlist-item{display:flex;justify-content:space-between;align-items:center;padding:8px;border-radius:8px;background:rgba(255,255,255,0.02);margin-bottom:6px}
+    .hidden{display:none}
+    footer{margin-top:12px;color:var(--muted);font-size:0.9rem}
+    @media(max-width:960px){.row{flex-direction:column}}
+  </style>
+
+  <!-- TradingView widget -->
+  <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+  <!-- Firebase modular via ESM (works in modern browsers) -->
+  <script type="module">
+    // Using module import of Firebase v9+ (ESM). This script sets window.firebaseModules for the app below.
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+    import { getAuth } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
+    import { getFirestore } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
+    // Export to global so main non-module script can access (we attach to window)
+    window.firebaseModules = { initializeApp, getAuth, getFirestore };
+  </script>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <div class="logo">VSE</div>
+        <div>
+          <div style="font-size:1.15rem;font-weight:700">VSE — Indian Stock Market Simulator</div>
+          <div class="muted small">Simulated NSE trading • Demo</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <div id="user-info" class="muted small">Not signed in</div>
+        <button id="btn-signin" class="primary">Sign In</button>
+      </div>
+    </header>
+
+    <div class="row">
+      <!-- LEFT: chart & trade -->
+      <div class="col card" style="min-width:360px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div>
+            <div id="selected-symbol" style="font-weight:700;font-size:1.05rem">—</div>
+            <div id="symbol-sub" class="muted small">Search symbol (e.g. RELIANCE.NS)</div>
+          </div>
+          <div style="text-align:right">
+            <div class="muted small">Cash balance</div>
+            <div id="cash-balance" style="font-weight:700;font-size:1.05rem">₹ 0.00</div>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <input id="search-input" placeholder="Symbol e.g. TCS.NS or RELIANCE.NS" />
+          <button id="btn-search">Search</button>
+          <button id="btn-add-watch">+WL</button>
+        </div>
+
+        <div id="tradingview_chart" style="height:420px;border-radius:8px;overflow:hidden;margin-bottom:8px;background:#021019"></div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div class="muted small" id="last-price">Last: —</div>
+          <div class="muted small" id="market-status">Market: —</div>
+        </div>
+
+        <hr style="border:none;height:1px;background:rgba(255,255,255,0.04);margin:12px 0">
+
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="trade-type" style="width:110px"><option value="buy">Buy</option><option value="sell">Sell</option></select>
+          <input id="trade-qty" type="number" min="1" value="1" style="width:120px" />
+          <input id="trade-price" placeholder="Limit price (optional)" style="width:160px" />
+          <button id="btn-trade" class="primary">Place Order</button>
+        </div>
+
+        <div class="muted small" style="margin-top:8px">Orders placed while NSE closed (09:15–15:30 IST) become <strong>pending</strong>. Admin can run pending orders or use Cloud Functions to automate.</div>
+      </div>
+
+      <!-- RIGHT -->
+      <div style="width:360px;min-width:280px">
+        <div class="card" style="margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="font-weight:700">Watchlist</div>
+            <div class="muted small">Click to open</div>
+          </div>
+          <div id="watchlist"></div>
+        </div>
+
+        <div class="card" style="margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="font-weight:700">Top snapshot</div>
+            <button id="btn-refresh-gainers">Refresh</button>
+          </div>
+          <div id="top-gainers" class="muted small">Loading...</div>
+        </div>
+
+        <div class="card" style="margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="font-weight:700">Orders & Transactions</div>
+            <div class="muted small">Pending executes on next open</div>
+          </div>
+          <div id="orders-list" class="muted small">No orders</div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="font-weight:700">Admin</div>
+          </div>
+          <div class="muted small">Admins are controlled via `admins` collection in Firestore.</div>
+          <div id="admin-tools" class="hidden" style="margin-top:8px">
+            <button id="btn-run-pending">Run pending now</button>
+            <div id="admin-log" class="muted small" style="margin-top:8px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="muted small">Push to GitHub Pages. For production: move API keys & order execution to server-side Cloud Functions and tighten Firestore rules.</footer>
+  </div>
+
+<script>
+/* ================== FINAL CONFIG: using credentials you provided ================== */
+const firebaseConfig = {
+  apiKey: "AIzaSyDr_yQFo5DGNIBpAfOezVYyMd-wtiDwN9c",
+  authDomain: "myweb-cd0a2.firebaseapp.com",
+  projectId: "myweb-cd0a2",
+  storageBucket: "myweb-cd0a2.firebasestorage.app",
+  messagingSenderId: "896802835911",
+  appId: "1:896802835911:web:4eca4c7c6fb7e516fb5de2"
+};
+
+const COMMON_PASSWORD = "vse2k25";
+const ADMIN_EMAIL = "admin6@vse.com";
+const ADMIN_PASSWORD = "adminvse2k25";
+const TWELVE_API = "c933f15065e54a7b9d8908b084d72de1";
+/* ================================================================================ */
+
+/* Wait for firebaseModules from module script to be available */
+function waitForFirebaseModules(timeout = 5000){
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    (function check(){
+      if(window.firebaseModules) return resolve(window.firebaseModules);
+      if(Date.now() - start > timeout) return reject(new Error('Firebase modules not loaded'));
+      setTimeout(check, 50);
+    })();
+  });
+}
+
+(async () => {
+  // import firebase modular functions from the module bootstrap
+  const mods = await waitForFirebaseModules();
+  const { initializeApp, getAuth, getFirestore } = mods;
+
+  // Initialize
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+
+  // We'll also need Firestore helper functions - import via dynamic ESM helper
+  // But because we didn't set them on window earlier, import the rest here:
+  // We'll dynamically import required Firestore functions using ESM URLs
+  const { doc, setDoc, getDoc, collection, addDoc, query, where, getDocs, orderBy, limit, updateDoc, runTransaction } =
+    await import('https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js').then(m => m);
+
+  const { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } =
+    await import('https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js').then(m => m);
+
+  // UI refs
+  const btnSignin = document.getElementById('btn-signin');
+  const userInfo = document.getElementById('user-info');
+  const btnSearch = document.getElementById('btn-search');
+  const searchInput = document.getElementById('search-input');
+  const btnAddWatch = document.getElementById('btn-add-watch');
+  const watchlistDiv = document.getElementById('watchlist');
+  const selectedSymbolEl = document.getElementById('selected-symbol');
+  const symbolSub = document.getElementById('symbol-sub');
+  const lastPriceEl = document.getElementById('last-price');
+  const marketStatusEl = document.getElementById('market-status');
+  const btnTrade = document.getElementById('btn-trade');
+  const tradeQty = document.getElementById('trade-qty');
+  const tradePrice = document.getElementById('trade-price');
+  const tradeType = document.getElementById('trade-type');
+  const cashBalanceEl = document.getElementById('cash-balance');
+  const btnRefreshGainers = document.getElementById('btn-refresh-gainers');
+  const topGainersEl = document.getElementById('top-gainers');
+  const ordersList = document.getElementById('orders-list');
+  const adminTools = document.getElementById('admin-tools');
+  const btnRunPending = document.getElementById('btn-run-pending');
+  const adminLog = document.getElementById('admin-log');
+
+  let currentUser = null;
+  let selectedSymbol = null;
+  let tradingviewWidget = null;
+  let pricePoller = null;
+  let currentPrice = null;
+
+  // Helpers
+  function formatINR(n){ if(n==null) return '—'; return '₹ ' + Number(n).toLocaleString('en-IN', {maximumFractionDigits:2}); }
+  function nowIST(){
+    const d = new Date();
+    const utc = d.getTime() + (d.getTimezoneOffset() * 60000);
+    return new Date(utc + (3600000*5.5));
+  }
+  function isMarketOpenIST(dt = null){
+    const d = dt || nowIST();
+    const day = d.getDay();
+    if(day === 0 || day === 6) return false;
+    const hh = d.getHours(), mm = d.getMinutes();
+    const minutes = hh*60 + mm;
+    const open = 9*60 + 15, close = 15*60 + 30;
+    return minutes >= open && minutes < close;
+  }
+
+  /* --- AUTH: sign in using common password or sign out --- */
+  btnSignin.addEventListener('click', async () => {
+    if(!currentUser){
+      try {
+        // Attempt to sign in as admin if admin account exists, else create admin account then sign in
+        await signInWithEmailAndPassword(auth, ADMIN_EMAIL, ADMIN_PASSWORD);
+      } catch(err){
+        if(err.code === 'auth/user-not-found' || err.message?.includes('user-not-found')){
+          try {
+            await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, ADMIN_PASSWORD);
+            // create admins entry
+            await setDoc(doc(db, 'admins', ADMIN_EMAIL), {role:'admin', createdAt: new Date()});
+            alert('Admin created and signed in.');
+          } catch(e){
+            alert('Admin creation failed: ' + e.message);
+          }
+        } else {
+          // fallback: prompt for email/password (common password allowed)
+          const email = prompt('Email to sign in (or cancel):', ADMIN_EMAIL) || null;
+          if(!email) return;
+          let pw = prompt('Password:', COMMON_PASSWORD);
+          if(!pw) return;
+          try {
+            await signInWithEmailAndPassword(auth, email, pw);
+          } catch(e){
+            if(e.code === 'auth/user-not-found'){
+              try { await createUserWithEmailAndPassword(auth, email, pw); alert('User created & signed in.'); }
+              catch(err2){ alert('Create failed: ' + err2.message); }
+            } else alert('Sign in failed: ' + e.message);
+          }
+        }
+      }
+    } else {
+      await signOut(auth);
+    }
+  });
+
+  onAuthStateChanged(auth, async (user) => {
+    currentUser = user;
+    if(user){
+      userInfo.textContent = user.email;
+      btnSignin.textContent = 'Sign out';
+      await ensureUserDoc(user.uid, user.email);
+      loadUserState();
+      await checkAdmin(user.email);
+    } else {
+      userInfo.textContent = 'Not signed in';
+      btnSignin.textContent = 'Sign In';
+      selectedSymbol = null;
+      selectedSymbolEl.textContent = '—';
+      symbolSub.textContent = 'Search symbol (e.g. RELIANCE.NS)';
+      if(tradingviewWidget) document.getElementById('tradingview_chart').innerHTML = '';
+      if(pricePoller) clearInterval(pricePoller);
+      watchlistDiv.innerHTML = '';
+      ordersList.innerHTML = '';
+      cashBalanceEl.textContent = formatINR(0);
+      adminTools.classList.add('hidden');
+    }
+  });
+
+  /* Ensure user doc with starting balance */
+  async function ensureUserDoc(uid, email){
+    const uRef = doc(db, 'users', uid);
+    const uSnap = await getDoc(uRef);
+    if(!uSnap.exists()){
+      await setDoc(uRef, { balance: 100000, email: email || null, createdAt: new Date() });
+    }
+  }
+
+  async function checkAdmin(email){
+    try {
+      const adm = await getDoc(doc(db, 'admins', email));
+      if(adm.exists()) adminTools.classList.remove('hidden'); else adminTools.classList.add('hidden');
+    } catch(e){ console.error(e); }
+  }
+
+  async function loadUserState(){
+    if(!currentUser) return;
+    const uSnap = await getDoc(doc(db, 'users', currentUser.uid));
+    cashBalanceEl.textContent = formatINR((uSnap.data()||{}).balance || 0);
+    renderWatchlist();
+    renderOrders();
+  }
+
+  /* --- WATCHLIST --- */
+  btnAddWatch.addEventListener('click', async () => {
+    if(!currentUser) return alert('Sign in to save watchlist');
+    const symbol = (selectedSymbol || searchInput.value).toUpperCase().trim();
+    if(!symbol) return alert('Select or enter symbol first');
+    const ref = doc(db, 'users', currentUser.uid, 'watchlist', symbol);
+    await setDoc(ref, { symbol, addedAt: new Date() });
+    renderWatchlist();
+  });
+
+  async function renderWatchlist(){
+    watchlistDiv.innerHTML = '';
+    if(!currentUser){ watchlistDiv.innerHTML = '<div class="muted small">Sign in to save watchlist</div>'; return; }
+    const q = query(collection(db, 'users', currentUser.uid, 'watchlist'), orderBy('addedAt', 'desc'));
+    const snap = await getDocs(q);
+    if(snap.empty) { watchlistDiv.innerHTML = '<div class="muted small">No items</div>'; return; }
+    snap.forEach(d => {
+      const data = d.data();
+      const el = document.createElement('div');
+      el.className = 'watchlist-item';
+      el.innerHTML = `<div style="font-weight:700">${data.symbol}</div>
+        <div style="display:flex;gap:6px"><button class="btn-open small">Open</button><button class="btn-rem small">×</button></div>`;
+      watchlistDiv.appendChild(el);
+      el.querySelector('.btn-open').onclick = () => selectSymbol(data.symbol);
+      el.querySelector('.btn-rem').onclick = async () => { await setDoc(doc(db, 'users', currentUser.uid, 'watchlist', data.symbol), {}, { merge: false }); // overwrite with empty -> faster remove
+        // better to delete:
+        try { await import('https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js').then(m => m.deleteDoc(doc(db, 'users', currentUser.uid, 'watchlist', data.symbol))); } catch(e){ /* ignore */ }
+        renderWatchlist();
+      };
+    });
+  }
+
+  /* --- SYMBOL SELECT & TradingView --- */
+  btnSearch.addEventListener('click', () => {
+    const s = searchInput.value.trim().toUpperCase();
+    if(!s) return alert('Enter symbol');
+    selectSymbol(s);
+  });
+
+  async function selectSymbol(symbol){
+    selectedSymbol = symbol;
+    selectedSymbolEl.textContent = symbol;
+    symbolSub.textContent = 'Loading chart & price...';
+    createTradingView(symbol);
+    await fetchLatestPrice(symbol);
+    if(pricePoller) clearInterval(pricePoller);
+    pricePoller = setInterval(() => fetchLatestPrice(symbol), 2000);
+    marketStatusEl.textContent = isMarketOpenIST() ? 'OPEN (NSE IST)' : 'CLOSED';
+  }
+
+  function createTradingView(symbol){
+    const container = document.getElementById('tradingview_chart');
+    container.innerHTML = '';
+    let tvSymbol = symbol;
+    if(tvSymbol.endsWith('.NS')) tvSymbol = tvSymbol.replace('.NS','');
+    tradingviewWidget = new TradingView.widget({
+      "container_id": "tradingview_chart",
+      "autosize": true,
+      "symbol": "NSE:" + tvSymbol,
+      "interval": "5",
+      "timezone": "Asia/Kolkata",
+      "theme": "dark",
+      "style": "1",
+      "toolbar_bg": "#071427",
+      "hide_side_toolbar": false,
+      "allow_symbol_change": true,
+      "details": true,
+      "studies": ["MAExp@tv-basicstudies","RSI@tv-basicstudies"],
+      "withdateranges": true,
+      "show_popup_button": true,
+      "popup_width": "1000",
+      "popup_height": "650"
+    });
+  }
+
+  /* --- Twelve Data price polling --- */
+  async function fetchLatestPrice(symbol){
+    try {
+      const url = `https://api.twelvedata.com/price?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(TWELVE_API)}`;
+      const res = await fetch(url);
+      const j = await res.json();
+      if(j && j.price){
+        currentPrice = parseFloat(j.price);
+        lastPriceEl.textContent = 'Last: ' + formatINR(currentPrice);
+      } else {
+        lastPriceEl.textContent = 'Last: —';
+        console.warn('TwelveData price error', j);
+      }
+      marketStatusEl.textContent = isMarketOpenIST() ? 'OPEN' : 'CLOSED';
+    } catch(e){ console.error(e); lastPriceEl.textContent = 'Last: —'; }
+  }
+
+  /* --- TRADING: place orders (client-side simulation) --- */
+  btnTrade.addEventListener('click', async () => {
+    if(!currentUser) return alert('Sign in to trade');
+    if(!selectedSymbol) return alert('Select a symbol first');
+    const qty = Number(tradeQty.value);
+    if(!qty || qty <= 0) return alert('Enter valid quantity');
+    const type = tradeType.value;
+    const limit = tradePrice.value ? Number(tradePrice.value) : null;
+    const usePrice = limit || currentPrice;
+    if(!usePrice) return alert('Price unknown; try again');
+
+    const order = {
+      userId: currentUser.uid,
+      symbol: selectedSymbol,
+      type,
+      qty,
+      limitPrice: limit || null,
+      placedAt: new Date(),
+      status: isMarketOpenIST() ? 'executed' : 'pending',
+      executedAt: isMarketOpenIST() ? new Date() : null,
+      executedPrice: isMarketOpenIST() ? usePrice : null
+    };
+
+    // save order
+    const userOrdersCol = collection(db, 'users', currentUser.uid, 'orders');
+    await addDoc(userOrdersCol, order);
+
+    // if executed now, apply to positions/balance
+    if(order.status === 'executed'){
+      try {
+        await applyExecutionClient(currentUser.uid, order, order.executedPrice);
+      } catch(e){
+        alert('Execution failed: ' + e);
+        console.error(e);
+      }
+    }
+
+    alert('Order placed: ' + order.status);
+    await renderOrders();
+    await loadUserState();
+  });
+
+  async function applyExecutionClient(uid, order, execPrice){
+    const userRef = doc(db, 'users', uid);
+    await runTransaction(db, async (tx) => {
+      const uSnap = await tx.get(userRef);
+      if(!uSnap.exists()) throw 'user missing';
+      let balance = (uSnap.data().balance || 0);
+      const cost = execPrice * order.qty;
+      if(order.type === 'buy'){
+        if(balance < cost) throw 'Insufficient balance';
+        balance -= cost;
+        const posRef = doc(db, 'users', uid, 'positions', order.symbol);
+        const pSnap = await tx.get(posRef);
+        if(pSnap.exists()){
+          const p = pSnap.data();
+          const newQty = (p.qty || 0) + order.qty;
+          const newAvg = (((p.avg || 0) * (p.qty || 0)) + cost) / newQty;
+          tx.update(posRef, { qty: newQty, avg: newAvg });
+        } else {
+          tx.set(posRef, { qty: order.qty, avg: execPrice });
+        }
+      } else {
+        const posRef = doc(db, 'users', uid, 'positions', order.symbol);
+        const pSnap = await tx.get(posRef);
+        const p = pSnap.exists() ? pSnap.data() : { qty: 0 };
+        if((p.qty || 0) < order.qty) throw 'Not enough shares to sell';
+        const newQty = (p.qty || 0) - order.qty;
+        if(newQty === 0) tx.delete(posRef); else tx.update(posRef, { qty: newQty });
+        balance += cost;
+      }
+      tx.update(userRef, { balance });
+      // add transaction
+      const txRef = doc(db, 'users', uid, 'transactions', Date.now().toString());
+      tx.set(txRef, { symbol: order.symbol, type: order.type, qty: order.qty, price: execPrice, at: new Date() });
+    });
+  }
+
+  /* --- ORDERS render --- */
+  async function renderOrders(){
+    if(!currentUser){ ordersList.innerHTML = '<div class="muted small">Sign in to view orders</div>'; return; }
+    const q = query(collection(db, 'users', currentUser.uid, 'orders'), orderBy('placedAt','desc'));
+    const snap = await getDocs(q);
+    if(snap.empty){ ordersList.innerHTML = '<div class="muted small">No orders</div>'; return; }
+    ordersList.innerHTML = '';
+    snap.forEach(d => {
+      const o = d.data();
+      const el = document.createElement('div');
+      el.style.padding='8px'; el.style.marginBottom='6px'; el.style.borderRadius='8px'; el.style.background='rgba(255,255,255,0.02)';
+      el.innerHTML = `<div style="display:flex;justify-content:space-between">
+        <div><strong>${o.symbol}</strong><div class="muted small">${o.qty} • ${o.type}</div></div>
+        <div style="text-align:right">${o.status}<div class="muted small">${o.executedPrice ? formatINR(o.executedPrice) : (o.limitPrice ? 'L:' + o.limitPrice : 'MKT')}</div></div>
+      </div>`;
+      ordersList.appendChild(el);
+    });
+  }
+
+  /* --- Pending orders runner (admin) --- */
+  btnRunPending.addEventListener('click', executePendingOrdersNow);
+
+  async function executePendingOrdersNow(){
+    if(!currentUser) return alert('Sign in as admin to run pending');
+    const adm = await getDoc(doc(db, 'admins', currentUser.email));
+    if(!adm.exists()) return alert('Only admins can run pending orders');
+    adminLog.textContent = 'Running...';
+    const usersSnap = await getDocs(collection(db, 'users'));
+    let processed = 0;
+    for(const u of usersSnap.docs){
+      const uid = u.id;
+      const pendQ = query(collection(db, 'users', uid, 'orders'), where('status','==','pending'));
+      const pendSnap = await getDocs(pendQ);
+      for(const od of pendSnap.docs){
+        if(isMarketOpenIST()){
+          const o = od.data();
+          try {
+            const p = await fetchPriceForSymbol(o.symbol);
+            const execPrice = o.limitPrice || p;
+            // update order doc
+            await updateDoc(od.ref, { status:'executed', executedAt: new Date(), executedPrice: execPrice });
+            // apply execution (server-like) via transaction
+            await applyExecutionServerSide(uid, od.id, o, execPrice);
+            processed++;
+          } catch(e){ console.error('pending exec error', e); }
+        }
+      }
+    }
+    adminLog.textContent = `Processed ${processed} pending orders.`;
+    await renderOrders();
+  }
+
+  async function fetchPriceForSymbol(symbol){
+    const url = `https://api.twelvedata.com/price?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(TWELVE_API)}`;
+    const res = await fetch(url);
+    const j = await res.json();
+    if(j && j.price) return parseFloat(j.price);
+    throw 'Price fetch failed';
+  }
+
+  async function applyExecutionServerSide(uid, orderDocId, order, execPrice){
+    const userRef = doc(db, 'users', uid);
+    const orderRef = doc(db, 'users', uid, 'orders', orderDocId);
+    await runTransaction(db, async (tx) => {
+      const u = await tx.get(userRef);
+      if(!u.exists()) throw 'user not found';
+      let balance = (u.data().balance || 0);
+      const cost = execPrice * order.qty;
+      if(order.type === 'buy'){
+        if(balance < cost) throw 'Insufficient balance';
+        balance -= cost;
+        const posRef = doc(db, 'users', uid, 'positions', order.symbol);
+        const ps = await tx.get(posRef);
+        if(ps.exists()){
+          const p = ps.data();
+          const newQty = (p.qty || 0) + order.qty;
+          const newAvg = (((p.avg || 0) * (p.qty || 0)) + cost) / newQty;
+          tx.update(posRef, { qty: newQty, avg: newAvg });
+        } else {
+          tx.set(posRef, { qty: order.qty, avg: execPrice });
+        }
+      } else {
+        const posRef = doc(db, 'users', uid, 'positions', order.symbol);
+        const ps = await tx.get(posRef);
+        const p = ps.exists() ? ps.data() : { qty:0 };
+        if((p.qty || 0) < order.qty) throw 'Not enough shares';
+        const newQty = (p.qty || 0) - order.qty;
+        if(newQty === 0) tx.delete(posRef); else tx.update(posRef, { qty: newQty });
+        balance += cost;
+      }
+      tx.update(userRef, { balance });
+      tx.set(doc(db, 'users', uid, 'transactions', Date.now().toString()), { orderId: orderDocId, symbol: order.symbol, type: order.type, qty: order.qty, price: execPrice, at: new Date() });
+      tx.update(orderRef, { status:'executed', executedAt: new Date(), executedPrice: execPrice });
+    });
+  }
+
+  /* --- Top gainers snapshot (sample) --- */
+  btnRefreshGainers.addEventListener('click', loadTopGainers);
+  async function loadTopGainers(){
+    topGainersEl.textContent = 'Loading...';
+    const sample = ['RELIANCE.NS','TCS.NS','INFY.NS','HDFCBANK.NS','ICICIBANK.NS','LT.NS','HINDUNILVR.NS','BHARTIARTL.NS'];
+    try {
+      const arr = await Promise.all(sample.map(s => fetch(`https://api.twelvedata.com/price?symbol=${encodeURIComponent(s)}&apikey=${encodeURIComponent(TWELVE_API)}`).then(r=>r.json().then(j=>({s,j})))));
+      topGainersEl.innerHTML = '';
+      arr.forEach(o => {
+        const p = o.j.price ? Number(o.j.price) : null;
+        const el = document.createElement('div');
+        el.style.padding='6px'; el.style.marginBottom='6px'; el.style.borderRadius='6px'; el.style.background='rgba(255,255,255,0.02)';
+        el.innerHTML = `<div style="display:flex;justify-content:space-between"><div>${o.s}</div><div>${p? formatINR(p):'—'}</div></div>`;
+        el.onclick = () => selectSymbol(o.s);
+        topGainersEl.appendChild(el);
+      });
+    } catch(e){ console.error(e); topGainersEl.textContent = 'Failed to load'; }
+  }
+
+  /* utility */
+  async function fetchPriceQuick(symbol){
+    const res = await fetch(`https://api.twelvedata.com/price?symbol=${encodeURIComponent(symbol)}&apikey=${encodeURIComponent(TWELVE_API)}`);
+    const j = await res.json();
+    return j && j.price ? Number(j.price) : null;
+  }
+
+  // Auto-run pending every minute if admin logged in
+  setInterval(async () => {
+    if(!currentUser) return;
+    try {
+      const adm = await getDoc(doc(db, 'admins', currentUser.email));
+      if(adm.exists() && isMarketOpenIST()){
+        // run but don't block UI
+        await executePendingOrdersNow().catch(e => console.error('auto pending run err', e));
+      }
+    } catch(e){ /* ignore */ }
+  }, 60*1000);
+
+  // small helper to queue executed order function call used by auto-run
+  async function executePendingOrdersNow(){
+    // wrapper to call the same function declared above
+    return executePendingOrdersNow_real();
+  }
+  // we need to expose the real function name used earlier; assign alias:
+  const executePendingOrdersNow_real = executePendingOrdersNow_internal;
+  async function executePendingOrdersNow_internal(){
+    // same as button handler code above: reuse executePendingOrdersNow defined earlier
+    return executePendingOrdersNow(); // this will call the handler above (function hoisting ensures it's present)
+  }
+
+  // render initial
+  loadTopGainers();
+
+  // Safety: refresh balance display often
+  setInterval(async () => { if(currentUser){ const s = await getDoc(doc(db, 'users', currentUser.uid)); cashBalanceEl.textContent = formatINR((s.data()||{}).balance || 0); } }, 10000);
+
+  // Expose some functions to console for debugging
+  window.vse = {
+    selectSymbol, fetchPriceQuick, renderOrders, renderWatchlist, loadTopGainers
+  };
+
+  // first-time: if admin not present, create admin user doc & admins entry (but don't create auth user here — sign-in button handles)
+  // create admin entry in admins collection if absent
+  try {
+    const adRef = doc(db, 'admins', ADMIN_EMAIL);
+    const adSnap = await getDoc(adRef);
+    if(!adSnap.exists()) await setDoc(adRef, { role:'admin', createdAt: new Date() });
+  } catch(e){ console.warn('admin ensure failed', e); }
+
+})();
+</script>
+</body>
+</html>
